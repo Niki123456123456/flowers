@@ -17,6 +17,7 @@ fn App() -> Element {
     let error = use_signal(|| None::<String>);
     let mut zoom = use_signal(|| 1.0_f64);
     let mut pan = use_signal(|| (0.0_f64, 0.0_f64));
+    let mut viewport_size = use_signal(|| (0.0_f64, 0.0_f64));
     let mut is_panning = use_signal(|| false);
     let mut last_mouse = use_signal(|| None::<(f64, f64)>);
     let mut is_drag_over = use_signal(|| false);
@@ -77,37 +78,6 @@ fn App() -> Element {
                         }
                     }
                 });
-            },
-            onwheel: move |event| {
-                let modifiers = event.modifiers();
-                let zoom_modifier_pressed =
-                    modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::META);
-
-                if !zoom_modifier_pressed {
-                    return;
-                }
-
-                event.prevent_default();
-
-                let delta_y = match event.delta() {
-                    WheelDelta::Pixels(delta) => delta.y,
-                    WheelDelta::Lines(delta) => delta.y * 30.0,
-                    WheelDelta::Pages(delta) => delta.y * 300.0,
-                };
-
-                let factor = (-delta_y / 280.0).exp();
-                let next_zoom = (zoom() * factor).clamp(0.1, 20.0);
-                zoom.set(next_zoom);
-            },
-            onmousedown: move |event| {
-                if image_src().is_none() || event.trigger_button() != Some(MouseButton::Primary) {
-                    return;
-                }
-
-                event.prevent_default();
-                let point = event.client_coordinates();
-                is_panning.set(true);
-                last_mouse.set(Some((point.x, point.y)));
             },
             onmousemove: move |event| {
                 if !is_panning() {
@@ -184,6 +154,65 @@ fn App() -> Element {
                             justify-content: center;
                             overflow: hidden;
                         ",
+                        onmounted: move |element| {
+                            let mut viewport_size = viewport_size;
+                            spawn(async move {
+                                if let Ok(rect) = element.get_client_rect().await {
+                                    viewport_size.set((rect.size.width, rect.size.height));
+                                }
+                            });
+                        },
+                        onresize: move |event| {
+                            if let Ok(size) = event.get_border_box_size() {
+                                viewport_size.set((size.width, size.height));
+                            }
+                        },
+                        onwheel: move |event| {
+                            let modifiers = event.modifiers();
+                            let zoom_modifier_pressed = modifiers.contains(Modifiers::CONTROL)
+                                || modifiers.contains(Modifiers::META);
+
+                            if !zoom_modifier_pressed {
+                                return;
+                            }
+
+                            event.prevent_default();
+
+                            let delta_y = match event.delta() {
+                                WheelDelta::Pixels(delta) => delta.y,
+                                WheelDelta::Lines(delta) => delta.y * 30.0,
+                                WheelDelta::Pages(delta) => delta.y * 300.0,
+                            };
+
+                            let current_zoom = zoom();
+                            let factor = (-delta_y / 280.0).exp();
+                            let next_zoom = (current_zoom * factor).clamp(0.1, 20.0);
+
+                            let (view_width, view_height) = viewport_size();
+                            if view_width > 0.0 && view_height > 0.0 {
+                                let pointer = event.element_coordinates();
+                                let cursor_x = pointer.x - (view_width * 0.5);
+                                let cursor_y = pointer.y - (view_height * 0.5);
+                                let ratio = next_zoom / current_zoom;
+
+                                pan.with_mut(|(x, y)| {
+                                    *x = cursor_x - (cursor_x - *x) * ratio;
+                                    *y = cursor_y - (cursor_y - *y) * ratio;
+                                });
+                            }
+
+                            zoom.set(next_zoom);
+                        },
+                        onmousedown: move |event| {
+                            if event.trigger_button() != Some(MouseButton::Primary) {
+                                return;
+                            }
+
+                            event.prevent_default();
+                            let point = event.client_coordinates();
+                            is_panning.set(true);
+                            last_mouse.set(Some((point.x, point.y)));
+                        },
                         div {
                             style: format!(
                                 "
@@ -204,7 +233,6 @@ fn App() -> Element {
                                     object-fit: contain;
                                     transform: scale({});
                                     transform-origin: center center;
-                                    transition: transform 0.06s linear;
                                     cursor: {};
                                     ",
                                     zoom(),
