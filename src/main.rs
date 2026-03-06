@@ -79,7 +79,11 @@ fn App() -> Element {
                 });
             },
             onwheel: move |event| {
-                if !event.modifiers().contains(Modifiers::CONTROL) {
+                let modifiers = event.modifiers();
+                let zoom_modifier_pressed =
+                    modifiers.contains(Modifiers::CONTROL) || modifiers.contains(Modifiers::META);
+
+                if !zoom_modifier_pressed {
                     return;
                 }
 
@@ -211,7 +215,7 @@ fn App() -> Element {
                     }
                     p {
                         style: "margin: 0; font-size: 14px; opacity: 0.9;",
-                        "{image_name().unwrap_or_else(|| \"Bild\".to_string())} | Zoom: {(zoom() * 100.0).round()}% (Strg + Mausrad) | Verschieben: Linke Maustaste halten + ziehen"
+                        "{image_name().unwrap_or_else(|| \"Bild\".to_string())} | Zoom: Strg/Cmd + Mausrad ({(zoom() * 100.0).round()}%) | Verschieben: Linke Maustaste halten + ziehen"
                     }
                 }
             } else {
@@ -235,7 +239,7 @@ fn App() -> Element {
                     }
                     p {
                         style: "margin: 12px 0 0 0; font-size: 14px; opacity: 0.85;",
-                        "Zoom im Bild: Strg + Mausrad"
+                        "Zoom im Bild: Strg oder Cmd + Mausrad"
                     }
                 }
             }
