@@ -1,4 +1,5 @@
 use dioxus::html::geometry::WheelDelta;
+use dioxus::html::input_data::MouseButton;
 use dioxus::html::{FileData, HasFileData};
 use dioxus::prelude::*;
 use std::path::Path;
@@ -15,6 +16,9 @@ fn App() -> Element {
     let image_name = use_signal(|| None::<String>);
     let error = use_signal(|| None::<String>);
     let mut zoom = use_signal(|| 1.0_f64);
+    let mut pan = use_signal(|| (0.0_f64, 0.0_f64));
+    let mut is_panning = use_signal(|| false);
+    let mut last_mouse = use_signal(|| None::<(f64, f64)>);
     let mut is_drag_over = use_signal(|| false);
 
     rsx! {
@@ -37,6 +41,9 @@ fn App() -> Element {
                 let mut image_name = image_name;
                 let mut error = error;
                 let mut zoom = zoom;
+                let mut pan = pan;
+                let mut is_panning = is_panning;
+                let mut last_mouse = last_mouse;
 
                 spawn(async move {
                     let Some(file) = files.into_iter().next() else {
@@ -60,6 +67,9 @@ fn App() -> Element {
                             image_src.set(Some(data_uri));
                             image_name.set(Some(file.name()));
                             zoom.set(1.0);
+                            pan.set((0.0, 0.0));
+                            is_panning.set(false);
+                            last_mouse.set(None);
                             error.set(None);
                         }
                         Err(err) => {
@@ -84,6 +94,46 @@ fn App() -> Element {
                 let factor = (-delta_y / 280.0).exp();
                 let next_zoom = (zoom() * factor).clamp(0.1, 20.0);
                 zoom.set(next_zoom);
+            },
+            onmousedown: move |event| {
+                if image_src().is_none() || event.trigger_button() != Some(MouseButton::Primary) {
+                    return;
+                }
+
+                event.prevent_default();
+                let point = event.client_coordinates();
+                is_panning.set(true);
+                last_mouse.set(Some((point.x, point.y)));
+            },
+            onmousemove: move |event| {
+                if !is_panning() {
+                    return;
+                }
+
+                if !event.held_buttons().contains(MouseButton::Primary) {
+                    is_panning.set(false);
+                    last_mouse.set(None);
+                    return;
+                }
+
+                let point = event.client_coordinates();
+                if let Some((last_x, last_y)) = last_mouse() {
+                    let dx = point.x - last_x;
+                    let dy = point.y - last_y;
+                    pan.with_mut(|(x, y)| {
+                        *x += dx;
+                        *y += dy;
+                    });
+                }
+                last_mouse.set(Some((point.x, point.y)));
+            },
+            onmouseup: move |_| {
+                is_panning.set(false);
+                last_mouse.set(None);
+            },
+            onmouseleave: move |_| {
+                is_panning.set(false);
+                last_mouse.set(None);
             },
             style: format!(
                 "
@@ -121,25 +171,47 @@ fn App() -> Element {
                         padding: 20px;
                         box-sizing: border-box;
                     ",
-                    img {
-                        src: src,
-                        alt: image_name().unwrap_or_else(|| "Bild".to_string()),
-                        draggable: "false",
-                        style: format!(
-                            "
-                            max-width: 98vw;
-                            max-height: 88vh;
-                            object-fit: contain;
-                            transform: scale({});
-                            transform-origin: center center;
-                            transition: transform 0.06s linear;
-                            ",
-                            zoom()
-                        ),
+                    div {
+                        style: "
+                            width: 100%;
+                            flex: 1;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            overflow: hidden;
+                        ",
+                        div {
+                            style: format!(
+                                "
+                                transform: translate({}px, {}px);
+                                will-change: transform;
+                                ",
+                                pan().0,
+                                pan().1
+                            ),
+                            img {
+                                src: src,
+                                alt: image_name().unwrap_or_else(|| "Bild".to_string()),
+                                draggable: "false",
+                                style: format!(
+                                    "
+                                    max-width: 98vw;
+                                    max-height: 84vh;
+                                    object-fit: contain;
+                                    transform: scale({});
+                                    transform-origin: center center;
+                                    transition: transform 0.06s linear;
+                                    cursor: {};
+                                    ",
+                                    zoom(),
+                                    if is_panning() { "grabbing" } else { "grab" }
+                                ),
+                            }
+                        }
                     }
                     p {
                         style: "margin: 0; font-size: 14px; opacity: 0.9;",
-                        "{image_name().unwrap_or_else(|| \"Bild\".to_string())} | Zoom: {(zoom() * 100.0).round()}% (Strg + Mausrad)"
+                        "{image_name().unwrap_or_else(|| \"Bild\".to_string())} | Zoom: {(zoom() * 100.0).round()}% (Strg + Mausrad) | Verschieben: Linke Maustaste halten + ziehen"
                     }
                 }
             } else {
